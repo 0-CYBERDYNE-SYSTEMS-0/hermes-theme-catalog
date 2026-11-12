@@ -39,6 +39,26 @@ The desktop half is `desktop/plugin.js`; if it does not appear in the app, copy
 it to `~/.hermes/desktop-plugins/theme-catalog/plugin.js` and ⌘K → **Reload
 desktop plugins**.
 
+## Use the themes in the TUI
+
+The desktop themes above only paint the desktop app. For the terminal UI, generate
+real TUI skins from the same profiles (same color math, same 4.5:1 floor):
+
+```bash
+python3 tools/build-skins.py                       # writes 606 skins to ~/.hermes/skins
+hermes skin use catalog-gruvbox-dark               # live repaint
+```
+
+The TUI also gets a picker widget (`tui/themes.mjs` — 606 rows with ANSI swatches,
+type-to-filter, arrows to move, enter applies live):
+
+```bash
+cp tui/themes.mjs ~/.hermes/tui-widgets/themes.mjs
+# in the TUI: /widgets-reload, then /themes
+```
+
+The picker applies via `hermes skin use <slug>`, so it drives the same skin files.
+
 ## Rebuild the catalog
 
 Profiles come from a checkout of iTerm2-Color-Schemes (WezTerm TOML layout):
