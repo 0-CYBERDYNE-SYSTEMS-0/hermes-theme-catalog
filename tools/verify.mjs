@@ -46,7 +46,7 @@ for (const profile of profiles) {
 
   const body = contrast(theme.colors.foreground, theme.colors.background)
   if (body < minBody.ratio) minBody = { ratio: body, label: profile.label }
-  const muted = contrast(theme.colors.mutedForeground, theme.colors.background)
+  const muted = contrast(theme.colors.mutedForeground, theme.colors.muted)
   if (muted < minMuted.ratio) minMuted = { ratio: muted, label: profile.label }
 
   if (!TOKEN_KEYS.every(k => /^#[0-9a-f]{6}$/i.test(theme.colors[k]))) {
@@ -60,7 +60,7 @@ console.log(`profiles checked : ${profiles.length}`)
 console.log(`unique names     : ${names.size}`)
 console.log(`dark / light     : ${modes} / ${profiles.length - modes}`)
 console.log(`min body contrast: ${minBody.ratio.toFixed(2)}:1 (${minBody.label})`)
-console.log(`min muted        : ${minMuted.ratio.toFixed(2)}:1 (${minMuted.label})`)
+console.log(`min muted        : ${minMuted.ratio.toFixed(2)}:1 on the muted surface (${minMuted.label})`)
 console.log(`failures         : ${failures.length}`)
 console.log(`profiles whose own fg is under 4.5:1 (kept verbatim in the terminal palette): ${lowContrast.length}`)
 for (const line of lowContrast.slice(0, 8)) console.log('  ·', line)
