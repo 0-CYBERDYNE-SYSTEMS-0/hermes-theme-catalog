@@ -131,11 +131,16 @@ const TERMINAL_KEYS = [
  * sidebar and bubble surfaces) are derived from those colors rather than
  * invented, so a theme built from Gruvbox actually looks like Gruvbox.
  */
-const themeFromProfile = profile => {
-  const bg = String(profile.bg).toLowerCase()
+const themeFromProfile = (profile, patch) => {
+  // `patch` replaces one or both primary colors (profile keys: bg / fg) so the
+  // user can repaint a theme and have every derived token recompute from the
+  // new pair. Values that are not 6-digit hex are ignored, never trusted.
+  const hexOr = (value, fallback) => (/^#[0-9a-f]{6}$/i.test(String(value ?? '')) ? String(value).toLowerCase() : fallback)
+  const bg = hexOr(patch?.bg, String(profile.bg).toLowerCase())
+  const rawFg = hexOr(patch?.fg, String(profile.fg).toLowerCase())
   // UI text gets the readability floor; the terminal keeps the profile's own
   // foreground verbatim, because the palette is the thing being reproduced.
-  const fg = ensureContrast(profile.fg, bg, 4.5)
+  const fg = ensureContrast(rawFg, bg, 4.5)
   const ansi = profile.ansi
   const dark = luminance(bg) < 0.5
 
@@ -192,7 +197,7 @@ const themeFromProfile = profile => {
   }
 
   const terminal = {
-    foreground: String(profile.fg).toLowerCase(),
+    foreground: rawFg,
     cursor: ensureContrast(ansi[6], bg, 3),
     selectionBackground: dark ? 'rgba(255,255,255,0.18)' : 'rgba(0,0,0,0.14)',
     black: ansi[0],

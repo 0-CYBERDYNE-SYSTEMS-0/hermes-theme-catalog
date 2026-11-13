@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  node:
+    name: node ${{ matrix.node }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['20', '22']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Syntax check the shipped bundle
+        run: |
+          cp desktop/plugin.js "$RUNNER_TEMP/plugin.mjs"
+          node --check "$RUNNER_TEMP/plugin.mjs"
+      - name: Color math, fidelity and readability
+        run: node tools/verify.mjs
+      - name: Registration, render, editing and authoring
+        run: node tools/registration-test.mjs
+
+  python:
+    name: python 3.12
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Compile the plugin package and tools
+        run: python -m py_compile __init__.py sync.py tools/build.py tools/build-skins.py
