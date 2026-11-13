@@ -224,9 +224,9 @@ for (const text of texts) {
   if (/narrow the filter|\d+ more/i.test(text)) problems.push(`truncation notice still rendered: "${text}"`)
 }
 
-// ── primary-color editing, end to end ───────────────────────────────────────
-// Click the BG chip the way a user does, render the panel, drive the same
-// onChange the hex field calls, and assert what actually reached the registry.
+// ── editing a catalog theme mints a copy, never the catalog ─────────────────
+// The catalog is immutable: the first colour you paint on a catalog entry saves
+// a copy of it and the edit lands there. Everything below drives that contract.
 const rerender = () => {
   const element = routes[0].render()
   return typeof element?.type === 'function' ? element.type(element.props) : element
@@ -248,203 +248,202 @@ const findAll = (node, pred, out = [], depth = 0) => {
 }
 
 const isStrip = n => Array.isArray(n.props?.children) && n.props.children.length === 19 && n.props.children[0]?.props?.title
-/** findAll matches the strip's container node; the chips are its children. */
 const stripKids = tree => findAll(tree, isStrip).map(n => n.props.children)
 const isPanel = n => n.props?.['data-lens-panel'] === 'true'
-
-// The dispose check above ran the plugin's disposers, which nulls its republish
-// hook (correctly). Re-register so the edit path has a live registry to publish
-// into, exactly as it does in the running app.
-plugin.register(makeCtx())
-
-const target0 = themes[0].data
-const originalBg = target0.colors.background
-const originalFg = target0.terminal.foreground
-
 const clickChip = chip =>
   chip.props.onClick({
     currentTarget: { getBoundingClientRect: () => ({ left: 60, top: 120, bottom: 134 }) },
     preventDefault: () => {},
     stopPropagation: () => {}
   })
+const panelText = tree => {
+  const texts = []
+  const collect = node => {
+    if (!node || typeof node !== 'object') return
+    if (Array.isArray(node)) return node.forEach(collect)
+    if (typeof node.type === 'function') return collect(node.type({ ...node.props }))
+    if (typeof node.props?.children === 'string') texts.push(node.props.children)
+    collect(node.props?.children)
+  }
+  collect(findAll(tree, isPanel)[0])
+  return texts.join(' · ')
+}
+const commitHex = (tree, hex) => {
+  const panel = findAll(tree, isPanel)[0]
+  const input = findAll(panel, n => n.props?.['aria-label'] === 'Hex')[0]
+  if (!input) {
+    problems.push('editor has no hex input')
+    return
+  }
+  input.props.onChange({ target: { value: hex } })
+}
+
+// The dispose check above ran the plugin's disposers, which nulls its republish
+// hook (correctly). Re-register so the edit path has a live registry to publish
+// into, exactly as it does in the running app.
+plugin.register(makeCtx())
+const T = plugin.__test
+
+const catalog = themes[0].data
+const catalogName = catalog.name
+const catalogBg = catalog.colors.background
+const catalogFg = catalog.terminal.foreground
+const customBefore = T.custom().length
 
 let tree = rerender()
 clickChip(stripKids(tree)[0][0])
 tree = rerender()
 const panels = findAll(tree, isPanel)
 if (panels.length !== 1) problems.push(`editor panel rendered ${panels.length} times, expected 1`)
-const panel = panels[0] || { props: { children: [] } }
-if (!findAll(panel, n => n.props?.type === 'color').length) problems.push('editor has no system color input')
-if (!findAll(panel, n => n.props?.['aria-label'] === 'Hex').length) problems.push('editor has no hex input')
-if (!findAll(panel, n => ['R', 'G', 'B'].includes(n.props?.['aria-label'])).length) problems.push('editor has no RGB fields')
-if (!findAll(panel, n => n.props?.['data-hex']).length) problems.push('editor has no preset swatches for the lens')
+if (!findAll(tree, n => n.props?.type === 'color').length) problems.push('editor has no system color input')
+if (!findAll(tree, n => ['R', 'G', 'B'].includes(n.props?.['aria-label'])).length) problems.push('editor has no RGB fields')
+if (!findAll(tree, n => n.props?.['data-hex']).length) problems.push('editor has no preset swatches for the lens')
 
 const countBefore = registrations.length
-findAll(panel, n => n.props?.['aria-label'] === 'Hex')[0].props.onChange({ target: { value: '#101014' } })
-const republished = registrations.slice(countBefore).filter(r => r.id === `theme:${target0.name}`)
-if (republished.length !== 1) problems.push(`editing republished ${republished.length} registrations for ${target0.name}, expected 1`)
+commitHex(tree, '#101014')
+const minted = T.custom().slice(customBefore)
+if (minted.length !== 1) problems.push(`painting a catalog colour minted ${minted.length} copies, expected 1`)
+const copyName = minted[0]?.name
+const copy = copyName ? T.theme(copyName) : null
+
+if (catalog.colors.background !== catalogBg) problems.push(`catalog entry changed to ${catalog.colors.background} — it must stay pristine`)
+if (catalog.terminal.foreground !== catalogFg) problems.push('catalog entry foreground changed — it must stay pristine')
+if (!copy) problems.push('the minted copy is not registered in the lookup')
 else {
-  if (republished[0].data.colors.background !== '#101014') problems.push(`edit did not land: background ${republished[0].data.colors.background}`)
-  if (republished[0].data !== target0) problems.push('edit replaced the theme object instead of mutating the registered one')
+  if (copy.colors.background !== '#101014') problems.push(`copy background is ${copy.colors.background}, expected the painted colour`)
+  if (copy.label !== `${catalog.label} (mine)`) problems.push(`copy label is ${copy.label}`)
+  if (copy.description === undefined) problems.push('copy has no description (the ⌘K palette crashes on that)')
+  if (T.edits()[catalogName]) problems.push('the catalog name still carries an override')
+  if (!T.edits()[copyName]?.bg) problems.push('the copy did not record the override')
 }
+const published = registrations.slice(countBefore)
+if (!published.some(r => r.id === `theme:${copyName}`)) problems.push('the copy was never registered')
+if (published.some(r => r.id === `theme:${catalogName}`)) problems.push('the catalog entry was republished — it must not be')
+const customWrite = storageWrites.filter(w => w.key === 'custom-themes').pop()
+if (!customWrite || !customWrite.value.some(r => r.name === copyName)) problems.push('the copy was not persisted')
+if (!/\(mine\)/.test(panelText(rerender()))) problems.push('the editor did not retarget to the copy')
 
+// A second paint lands on the same copy: a drag must not spray entries.
 tree = rerender()
-if (stripKids(tree)[0]?.[0]?.props?.['data-hex'] !== '#101014') problems.push('row chip did not follow the edit')
-
-// Foreground: the UI token has a readability floor, the terminal keeps what you picked.
 clickChip(stripKids(tree)[0][1])
 tree = rerender()
 const bodyTab = findAll(findAll(tree, isPanel)[0], n => n.type === 'Button' && n.props?.children === 'Body text')[0]
 if (!bodyTab) problems.push('editor has no body-text tab')
 else bodyTab.props.onClick()
 tree = rerender()
-findAll(findAll(tree, isPanel)[0], n => n.props?.['aria-label'] === 'Hex')[0].props.onChange({ target: { value: '#123456' } })
-if (target0.terminal.foreground !== '#123456') problems.push(`terminal foreground is ${target0.terminal.foreground}, expected the picked #123456`)
-if (contrast(target0.colors.foreground, target0.colors.background) < 4.5) problems.push('edited body text breaks the 4.5:1 floor')
-
-await new Promise(resolve => setTimeout(resolve, 400))
-const persisted = storageWrites.filter(w => w.key === 'primary-color-edits').pop()
-if (!persisted) problems.push('color edits were never persisted to ctx.storage')
-else if (!persisted.value?.[target0.name]?.bg || !persisted.value?.[target0.name]?.fg) {
-  problems.push(`persisted record incomplete: ${JSON.stringify(persisted.value[target0.name])}`)
+commitHex(tree, '#123456')
+if (T.custom().length !== customBefore + 1) problems.push(`a second paint minted ${T.custom().length - customBefore} entries, expected 1`)
+if (!copy) problems.push('no copy to assert a second paint against')
+else {
+  if (copy.terminal.foreground !== '#123456') problems.push(`copy terminal foreground is ${copy.terminal.foreground}, expected the picked #123456`)
+  if (contrast(copy.colors.foreground, copy.colors.background) < 4.5) problems.push('edited body text breaks the 4.5:1 floor')
+  if (catalog.terminal.foreground !== catalogFg) problems.push('a second paint reached the catalog entry')
 }
 
-// Reset puts the profile's own colors back.
-tree = rerender()
-const resetButton = findAll(findAll(tree, isPanel)[0], n => n.type === 'Button' && n.props?.children === 'Reset both')[0]
-if (!resetButton) problems.push('editor has no reset button')
-else resetButton.props.onClick()
-if (target0.colors.background !== originalBg) problems.push(`reset left background at ${target0.colors.background}`)
-if (target0.terminal.foreground !== originalFg) problems.push(`reset left foreground at ${target0.terminal.foreground}`)
+await new Promise(resolve => setTimeout(resolve, 400))
+const editsWrite = storageWrites.filter(w => w.key === 'primary-color-edits').pop()
+if (!editsWrite) problems.push('overrides were never persisted')
+else if (editsWrite.value[catalogName]) problems.push('an override was persisted against a catalog name')
+else if (!editsWrite.value?.[copyName]?.fg) problems.push(`persisted record incomplete: ${JSON.stringify(editsWrite.value)}`)
 
-// Boot restore: a saved edit must be folded in before the theme registers.
-const bootCtx = makeCtx({ 'primary-color-edits': { [target0.name]: { bg: '#101014', fg: '#123456' } } })
-plugin.register(bootCtx)
-if (target0.colors.background !== '#101014') problems.push(`boot restore did not apply the saved background (${target0.colors.background})`)
-if (target0.terminal.foreground !== '#123456') problems.push('boot restore did not apply the saved foreground')
-const bootTheme = bootCtx._onDispose && registrations.slice(-3).find(r => r.id === `theme:${target0.name}`)
-if (bootTheme && bootTheme.data.colors.background !== '#101014') problems.push('boot restore registered unedited colors')
-
-// ── entry authoring, import/export, undo, compare, stars ────────────────────
-// Driven through the plugin's own test surface, so these are the shipping code
-// paths, not a reimplementation of them.
-const T = plugin.__test
-if (!T) problems.push('plugin exposes no __test surface')
+// Undo, compare, per-slot reset and reset-both all work on your own entry.
+// Guarded with `?.` so a broken mint reports instead of taking the harness down.
+if (!copyName) problems.push('no copy to exercise undo/reset against')
 else {
-  const before = T.themes().length
-  const created = T.saveAsEntry(target0.name, 'Gruvbox Test')
-  if (!created) problems.push('saveAsEntry returned nothing')
-  else {
-    if (!/^catalog-[a-z0-9-]+-custom$/.test(created)) problems.push(`saved entry name is ${created}`)
-    if (T.themes().length !== before + 1) problems.push(`save-as added ${T.themes().length - before} themes, expected 1`)
-    const saved = T.theme(created)
-    if (!saved) problems.push('saved entry is not registered in the lookup')
-    else {
-      if (saved.colors.background !== target0.colors.background) problems.push('saved entry did not capture the edited background')
-      if (saved.label !== 'Gruvbox Test') problems.push(`saved entry label is ${saved.label}`)
-    }
-    if (!registrations.some(r => r.id === `theme:${created}`)) problems.push('saved entry was never registered')
-    const customWrite = storageWrites.filter(w => w.key === 'custom-themes').pop()
-    if (!customWrite || !customWrite.value.some(r => r.name === created)) problems.push('saved entry was not persisted')
-  }
+  T.paintSlot(copyName, 'background', '#111111')
+  T.paintSlot(copyName, 'background', '#222222')
+  T.undoSlot(copyName, 'background')
+  if (copy?.colors.background !== '#111111') problems.push(`undo left background at ${copy?.colors.background}`)
+  T.paintSlot(copyName, 'background', '#333333')
+  T.beginCompare(copyName)
+  if (copy?.colors.background !== catalogBg) problems.push('compare did not show the pre-edit colours')
+  T.endCompare(copyName)
+  if (copy?.colors.background !== '#333333') problems.push('compare did not restore the edit')
+  T.resetSlot(copyName, 'background')
+  if (copy?.colors.background !== catalogBg) problems.push('resetSlot kept the background edit')
+  if (copy?.terminal.foreground !== '#123456') problems.push('resetSlot also cleared the foreground edit')
+  T.resetEdit(copyName)
+  if (copy?.terminal.foreground !== catalogFg) problems.push('reset both kept a colour')
+}
 
-  // Import: a payload with 16 ANSI slots becomes a registered theme.
+// Export writes a file through the browser download path.
+{
+  const realDoc = globalThis.document
+  let clicked = 0
+  globalThis.document = { createElement: () => ({ set href(_v) {}, set download(_v) {}, click: () => { clicked += 1 } }) }
+  try {
+    if (!T.exportThemes([copyName])) problems.push('exportThemes refused a real entry')
+    if (clicked !== 1) problems.push(`exportThemes clicked ${clicked} download anchors, expected 1`)
+  } finally {
+    if (realDoc === undefined) delete globalThis.document
+    else globalThis.document = realDoc
+  }
+}
+
+// Screen lens routes through the same mint: painted colour lands on the copy.
+{
+  const realWin = globalThis.window
+  globalThis.window = { innerWidth: 1200, innerHeight: 800, EyeDropper: class { open() { return Promise.resolve({ sRGBHex: '#123123' }) } } }
+  try {
+    await T.screenLens(catalogName, 'background')
+    if (copy?.colors.background !== '#123123') problems.push(`screen lens painted the copy ${copy?.colors.background}`)
+    if (catalog.colors.background !== catalogBg) problems.push('screen lens painted the catalog entry')
+  } finally {
+    if (realWin === undefined) delete globalThis.window
+    else globalThis.window = realWin
+  }
+}
+
+// Import: a payload with 16 ANSI slots becomes a registered theme; junk is refused.
+{
   const ansi = ['#000000', '#cc0000', '#4e9a06', '#c4a000', '#3465a4', '#75507b', '#06989a', '#d3d7cf',
     '#555753', '#ef2929', '#8ae234', '#fce94f', '#729fcf', '#ad7fa8', '#34e2e2', '#eeeeec']
   const imported = T.readImport(JSON.stringify({ version: 1, themes: [{ label: 'Imported Test', bg: '#202020', fg: '#e0e0e0', ansi }] }))
   if (imported.length !== 1) problems.push(`import created ${imported.length} themes, expected 1`)
-  else {
-    const t = T.theme(imported[0])
-    if (!t) problems.push('imported theme missing from the lookup')
-    else if (t.terminal.red !== '#cc0000') problems.push('imported palette did not survive')
-  }
+  else if (T.theme(imported[0])?.terminal.red !== '#cc0000') problems.push('imported palette did not survive')
   if (T.readImport(JSON.stringify({ themes: [{ label: 'bad', bg: 'nope', fg: '#ffffff', ansi }] })).length !== 0) {
     problems.push('import accepted an invalid background')
   }
-
-  // Export payload shape.
-  const payload = T.exportPayload([target0.name])
-  if (payload.themes.length !== 1) problems.push('exportPayload dropped the theme')
-  else {
-    const entry = payload.themes[0]
-    if (!/^#[0-9a-f]{6}$/.test(entry.bg) || !/^#[0-9a-f]{6}$/.test(entry.fg)) problems.push('export payload has no usable pair')
-    if (!Array.isArray(entry.ansi) || entry.ansi.length !== 16) problems.push('export payload has no 16-colour palette')
-  }
-
-  // Undo walks back one step per slot; compare swaps in the original pair.
-  T.paintSlot(target0.name, 'background', '#111111')
-  T.paintSlot(target0.name, 'background', '#222222')
-  T.undoSlot(target0.name, 'background')
-  if (target0.colors.background !== '#111111') problems.push(`undo left background at ${target0.colors.background}`)
-  T.paintSlot(target0.name, 'background', '#333333')
-  T.beginCompare(target0.name)
-  if (target0.colors.background !== originalBg) problems.push('compare did not show the original colours')
-  T.endCompare(target0.name)
-  if (target0.colors.background !== '#333333') problems.push('compare did not restore the edit')
-
-  // Reset one slot leaves the other alone.
-  T.paintSlot(target0.name, 'foreground', '#abcdef')
-  T.resetSlot(target0.name, 'background')
-  if (target0.colors.background !== originalBg) problems.push('resetSlot kept the background edit')
-  if (target0.terminal.foreground !== '#abcdef') problems.push('resetSlot also cleared the foreground edit')
-
-  // Stats and search.
-  const stats = T.statsFor(target0)
-  if (!(stats.min > 0 && stats.min <= stats.body + 1e-9)) problems.push('statsFor produced a nonsense minimum')
-  const darkCount = T.themes().filter(t => T.matches(t, 'dark')).length
-  if (darkCount === 0 || darkCount === T.themes().length) problems.push(`mode search matched ${darkCount} themes`)
-  const hexHits = T.themes().filter(t => T.matches(t, '#2e3440')).length
-  if (hexHits === 0) problems.push('hex search found nothing')
-
-  // Export writes a file through the browser download path.
-  {
-    const realDoc = globalThis.document
-    let clicked = 0
-    globalThis.document = {
-      createElement: () => ({ set href(_v) {}, set download(_v) {}, click: () => { clicked += 1 } })
-    }
-    try {
-      const ok = T.exportThemes([target0.name])
-      if (!ok) problems.push('exportThemes refused to export a real theme')
-      if (clicked !== 1) problems.push(`exportThemes clicked ${clicked} download anchors, expected 1`)
-    } finally {
-      if (realDoc === undefined) delete globalThis.document
-      else globalThis.document = realDoc
-    }
-  }
-
-  // Screen lens: the EyeDropper path must paint the sampled colour.
-  {
-    const realWin = globalThis.window
-    globalThis.window = { innerWidth: 1200, innerHeight: 800, EyeDropper: class { open() { return Promise.resolve({ sRGBHex: '#123123' }) } } }
-    try {
-      await T.screenLens(target0.name, 'background')
-      if (target0.colors.background !== '#123123') problems.push(`screen lens painted ${target0.colors.background}`)
-      globalThis.window = { innerWidth: 1200, innerHeight: 800 }
-      await T.screenLens(target0.name, 'background')
-    } finally {
-      if (realWin === undefined) delete globalThis.window
-      else globalThis.window = realWin
-    }
-  }
-
-  // Delete removes the registration it created.
-  const disposedBefore = disposed
-  if (created) {
-    T.deleteEntry(created)
-    if (T.theme(created)) problems.push('deleteEntry left the theme in the lookup')
-    if (T.themes().length !== before + 1) problems.push(`deleteEntry left ${T.themes().length - (before + 1)} extra themes`)
-    if (disposed === disposedBefore) problems.push('deleteEntry did not dispose the registration')
-  }
-
-  // Stars persist.
-  T.toggleStar(target0.name)
-  if (!T.stars()[target0.name]) problems.push('star did not stick')
-  await new Promise(resolve => setTimeout(resolve, 320))
-  const starWrite = storageWrites.filter(w => w.key === 'favorites').pop()
-  if (!starWrite || !starWrite.value[target0.name]) problems.push('stars were never persisted')
-  T.toggleStar(target0.name)
+  const payload = T.exportPayload([imported[0]])
+  if (payload.themes[0]?.ansi?.length !== 16) problems.push('export payload has no 16-colour palette')
 }
+
+// Migration: an override saved against a catalog name becomes a copy, and the
+// catalog entry goes back to what it ships as.
+{
+  const victim = themes[1].data
+  const victimBg = victim.colors.background
+  const beforeCount = T.custom().length
+  plugin.register(makeCtx({ 'primary-color-edits': { [victim.name]: { bg: '#0a0a0a' } } }))
+  const migrated = T.custom().find(r => r.base === victim.name)
+  if (!migrated) problems.push('migration did not mint a copy for the saved override')
+  else if (T.theme(migrated.name).colors.background !== '#0a0a0a') problems.push('migrated copy lost the saved colour')
+  if (T.custom().length !== beforeCount + 1) problems.push(`migration minted ${T.custom().length - beforeCount} entries, expected 1`)
+  if (victim.colors.background !== victimBg) problems.push('migration left the catalog entry modified')
+  if (T.edits()[victim.name]) problems.push('migration left the override on the catalog name')
+  await new Promise(resolve => setTimeout(resolve, 350))
+  const trimmed = storageWrites.filter(w => w.key === 'primary-color-edits').pop()
+  if (trimmed && trimmed.value?.[victim.name]) problems.push('migration did not clear the stored override')
+}
+
+// Delete removes the registration it created.
+{
+  const disposedBefore = disposed
+  const before = T.custom().length
+  if (!copyName) problems.push('no copy to delete')
+  else T.deleteEntry(copyName)
+  if (T.theme(copyName)) problems.push('deleteEntry left the theme in the lookup')
+  if (T.custom().length !== before - 1) problems.push('deleteEntry left the record behind')
+  if (disposed === disposedBefore) problems.push('deleteEntry did not dispose the registration')
+}
+
+// Stars persist.
+T.toggleStar(catalogName)
+if (!T.stars()[catalogName]) problems.push('star did not stick')
+await new Promise(resolve => setTimeout(resolve, 320))
+const starWrite = storageWrites.filter(w => w.key === 'favorites').pop()
+if (!starWrite || !starWrite.value[catalogName]) problems.push('stars were never persisted')
+T.toggleStar(catalogName)
 
 // The page shows the affordances the new features depend on.
 const chipByText = (tree, rx) =>
@@ -459,14 +458,14 @@ const rowThemes = tree => findAll(tree, n => typeof n.props?.['data-theme'] === 
   }
   if (!findAll(tree2, n => n.props?.className === 'tc-chip tc-edit-chip').length) problems.push('editable chips carry no affordance class')
 
-  // Mode filter: the Edited chip must show exactly the edited themes.
-  const editedChip = chipByText(tree2, /^Edited \d+$/)
-  if (!editedChip) problems.push('toolbar has no Edited filter')
+  // Mode filter: the Mine chip must show exactly your saved entries.
+  const mineChip = chipByText(tree2, /^Mine \d+$/)
+  if (!mineChip) problems.push('toolbar has no Mine filter')
   else {
-    editedChip.props.onClick()
-    const editedRows = rowThemes(rerender()).length
-    const expected = Object.keys(T.edits()).length
-    if (editedRows !== expected) problems.push(`Edited filter shows ${editedRows} rows, expected ${expected}`)
+    mineChip.props.onClick()
+    const mineRows = rowThemes(rerender()).length
+    const expected = T.custom().length
+    if (mineRows !== expected) problems.push(`Mine filter shows ${mineRows} rows, expected ${expected}`)
     const allChip = chipByText(rerender(), /^All$/)
     if (allChip) allChip.props.onClick()
   }
