@@ -92,6 +92,9 @@ let activeTheme = null
 /** Saved-entry records, kept in step with $custom so renders can read them. */
 const customByName = new Map()
 
+/** Catalog name -> the copy minted from it this session, so a colour drag mints once. */
+const copyFor = new Map()
+
 /**
  * Name, mode and colour search. A leading `#` searches the palette itself, so
  * "which theme has this green" is answerable; `dark` / `light` filter by mode.
@@ -217,13 +220,41 @@ function pushHistory(name, slot, hex) {
   $history.set(all)
 }
 
+/**
+ * The catalog is immutable: painting a colour on a catalog theme mints a copy of
+ * it (once per session, so a drag does not spray entries) and the edit lands
+ * there. Your own saved entries are edited in place.
+ */
+function resolveEditTarget(name) {
+  if (customByName.get(name)) return name
+  const existing = copyFor.get(name)
+  if (existing && THEME_BY_NAME.has(existing)) return existing
+  const created = saveAsEntry(name)
+  if (!created) return name
+  copyFor.set(name, created)
+  return created
+}
+
+/** Point the open editor (and the lens target) at the copy, and wear it. */
+function retargetEditor(from, to) {
+  const open = $editing.get()
+  if (open && open.name === from) $editing.set({ ...open, name: to })
+  const last = $lastTarget.get()
+  if (last && last.name === from) $lastTarget.set({ ...last, name: to })
+  const theme = THEME_BY_NAME.get(to)
+  if (theme) applyTheme(theme)
+}
+
 function paintSlot(name, slot, hex) {
   const clean = normalizeHex(hex)
   if (!clean) return false
-  const theme = THEME_BY_NAME.get(name)
+  const target = resolveEditTarget(name)
+  const theme = THEME_BY_NAME.get(target)
   if (!theme) return false
-  pushHistory(name, slot, requestedValue(name, slot, theme))
-  return applyEdit(name, { [SLOT_PATCH[slot]]: clean })
+  pushHistory(target, slot, requestedValue(target, slot, theme))
+  const ok = applyEdit(target, { [SLOT_PATCH[slot]]: clean })
+  if (ok && target !== name) retargetEditor(name, target)
+  return ok
 }
 
 /** Put one slot back to the profile's own color, leaving the other slot alone. */
@@ -742,6 +773,9 @@ function PrimaryEditor({ target, onClose }) {
           children: SLOT_LABEL[key]
         })
       ) }),
+      meta
+        ? null
+        : jsx('p', { style: { margin: 0, fontSize: 10, color: 'var(--ui-text-tertiary)' }, children: 'Repainting a catalog theme saves your version as a copy — the entry itself stays as shipped.' }),
       jsx('div', {
         'data-hex': current,
         style: {
@@ -1007,9 +1041,9 @@ function LensLayer() {
 
 const MODES = [
   { key: 'all', label: 'All' },
-  { key: 'edited', label: 'Edited' },
+  { key: 'mine', label: 'Mine' },
   { key: 'starred', label: '★' },
-  { key: 'mine', label: 'Mine' }
+  { key: 'edited', label: 'Tweaked' }
 ]
 
 function ModeChip({ active, children, onClick, title }) {
@@ -1139,7 +1173,7 @@ function CatalogPage() {
         jsx('h1', { style: { fontSize: 16, fontWeight: 600, color: 'var(--ui-text-primary)', margin: 0 }, children: 'Theme Catalog' }),
         jsx('p', {
           style: { fontSize: 12, color: 'var(--ui-text-secondary)', margin: 0 },
-          children: `${THEMES.length} themes. The first two chips are the background and body text — click either to repaint it. ${editedCount} edited · ${custom.length} saved · ${starredCount} starred.  / filter · ↑↓ move · ↵ apply · e edit · s star`
+          children: `${THEMES.length} themes. The first two chips are the background and body text; repainting one on a catalog theme saves it as your copy and leaves the catalog pristine. ${custom.length} mine · ${editedCount} tweaked · ${starredCount} starred.  / filter · ↑↓ move · ↵ apply · e edit · s star`
         })
       ] }),
       jsxs('div', { style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }, children: [
@@ -1162,7 +1196,7 @@ function CatalogPage() {
               $cursor.set(-1)
             },
             title: m.key === 'starred' ? 'Starred only' : m.key === 'mine' ? 'Saved by you' : undefined,
-            children: m.key === 'edited' ? `Edited ${editedCount}` : m.key === 'starred' ? `★ ${starredCount}` : m.key === 'mine' ? `Mine ${custom.length}` : m.label
+            children: m.key === 'edited' ? `Tweaked ${editedCount}` : m.key === 'starred' ? `★ ${starredCount}` : m.key === 'mine' ? `Mine ${custom.length}` : m.label
           })
         ),
         jsx(ModeChip, {
@@ -1241,6 +1275,7 @@ export default {
     paintSlot,
     undoSlot,
     resetSlot,
+    resetEdit,
     beginCompare,
     endCompare,
     saveAsEntry,
@@ -1293,19 +1328,32 @@ export default {
       }
     }
 
-    const disposers = new Map()
-    const registerTheme = theme => {
-      const id = `theme:${theme.name}`
-      // Replace, never dispose: the disposer removes by id, so disposing the old
-      // one after republishing would delete the new registration.
-      disposers.set(id, ctx.register({ id, area: THEMES_AREA, data: theme }))
-    }
-    republishTheme = registerTheme
-    dropTheme = name => {
-      const id = `theme:${name}`
-      const dispose = disposers.get(id)
-      if (dispose) dispose()
-      disposers.delete(id)
+    // ── model migration ────────────────────────────────────────────────────
+    // Older builds edited catalog entries in place and persisted the override
+    // against the catalog name. The catalog is immutable now, so every such
+    // override becomes the saved copy it should have been, and the catalog entry
+    // returns to what it ships as.
+    let migrated = 0
+    for (const [name, patch] of Object.entries(savedEdits)) {
+      if (!patch || !THEME_BY_NAME.has(name) || customByName.get(name)) continue
+      const theme = THEME_BY_NAME.get(name)
+      const profile = PROFILE_BY_NAME.get(name)
+      if (!theme || !profile) continue
+      const created = registerEntry(
+        {
+          label: `${theme.label} (mine)`,
+          description: `Saved from ${theme.label}`,
+          base: name,
+          bg: patch.bg || profile.bg,
+          fg: patch.fg || profile.fg,
+          ansi: profile.ansi
+        },
+        { persist: false }
+      )
+      if (created) {
+        delete savedEdits[name]
+        migrated += 1
+      }
     }
 
     // Saved entries first, then edits on top, so the first paint matches storage.
@@ -1340,6 +1388,21 @@ export default {
       theme.mode = fresh.mode
     }
 
+    const disposers = new Map()
+    const registerTheme = theme => {
+      const id = `theme:${theme.name}`
+      // Replace, never dispose: the disposer removes by id, so disposing the old
+      // one after republishing would delete the new registration.
+      disposers.set(id, ctx.register({ id, area: THEMES_AREA, data: theme }))
+    }
+    republishTheme = registerTheme
+    dropTheme = name => {
+      const id = `theme:${name}`
+      const dispose = disposers.get(id)
+      if (dispose) dispose()
+      disposers.delete(id)
+    }
+
     for (const theme of THEMES) registerTheme(theme)
 
     // A page, not a pane: closing a plugin's only pane disables the plugin and
@@ -1356,6 +1419,12 @@ export default {
         run: () => host.navigate('/theme-catalog')
       }
     })
+
+    if (migrated) {
+      persistCustom()
+      persistEdits()
+      host.notify(`${migrated} edited catalog theme${migrated === 1 ? '' : 's'} became your saved cop${migrated === 1 ? 'y' : 'ies'}. The catalog is back to what it ships as.`)
+    }
 
     ctx.onDispose(() => {
       for (const dispose of disposers.values()) dispose()

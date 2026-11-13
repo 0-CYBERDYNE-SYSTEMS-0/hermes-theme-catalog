@@ -27,7 +27,8 @@ so a catalog theme built from Gruvbox reads like Gruvbox.
   applies, `e` opens the editor, `s` stars, `Esc` clears. Each row shows its
   minimum contrast ratio, so an unreadable palette is visible before you wear it.
 - **Repaint the two primary colors.** The first two chips on every row are the
-  page background and the body text. Click either one and the editor opens with
+  page background and the body text. Painting one on a catalog entry saves your
+  version as a copy and leaves the entry as shipped. Click either chip and the editor opens with
   the system color picker (macOS wheel / sliders / palettes / magnifier), a hex
   field, R·G·B fields, the theme's own 16 colors as presets, and a lens.
   **Hover pick** arms a lens: hover any swatch on the page, click to take that
@@ -107,15 +108,21 @@ node tools/registration-test.mjs   # loads the plugin under stubs, exercises reg
 
 ## Authoring a theme of your own
 
-An edit is an override of one catalog theme: it is stored in this install's
-plugin storage (`primary-color-edits`), survives restart and reinstall, and
-never rewrites the shipped catalog.
+**The catalog is immutable.** Repainting a colour on a catalog entry does not
+change that entry: the first colour you paint saves a copy of it
+(`catalog-<name>-custom`, labelled `<Name> (mine)`) and the edit lands on the
+copy. Every later paint in that session reuses the same copy, so dragging the
+system picker cannot spray entries. Your own entries are edited in place — no
+further copies, no surprises.
 
-To keep a look as an entry of its own, **Save as** in the editor mints
-`catalog-<name>-custom` with the current pair and the profile's own 16 ANSI
-colors. Saved entries are registered themes: they appear in Appearance, ⌘K and
-`/skin`, can be starred, edited, and **Deleted** from the editor. They live in
-`custom-themes` in plugin storage.
+`Mine` counts your saved entries; `Tweaked` counts those you have recoloured
+since saving. `Delete` (in the editor, for your own entries) removes the
+registration, its overrides and its star.
+
+**Upgrading from 0.3.0.** That build overrode catalog entries in place. On first
+load, any override stored against a catalog name is converted into the copy it
+should have been, the override record is cleared, and a notice says how many were
+converted. The catalog entries go back to what they ship as.
 
 **Export** writes `{ version, exportedAt, themes: [{ label, base, bg, fg, ansi }] }`
 as JSON (one theme from the editor, the current list from the toolbar);
