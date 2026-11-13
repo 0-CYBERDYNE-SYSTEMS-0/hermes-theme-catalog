@@ -1,0 +1,13 @@
+{
+  "name": "hermes-theme-catalog",
+  "version": "0.3.0",
+  "private": true,
+  "description": "606 terminal color profiles as Hermes desktop and TUI themes, with in-app color authoring.",
+  "type": "module",
+  "license": "MIT",
+  "scripts": {
+    "build": "python3 tools/build.py",
+    "check": "cp desktop/plugin.js /tmp/tc-check.mjs && node --check /tmp/tc-check.mjs",
+    "test": "node tools/verify.mjs && node tools/registration-test.mjs"
+  }
+}

@@ -10,14 +10,21 @@
  *
  * Usage: node tools/verify.mjs
  */
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 
 import { themeFromProfile, validateTheme, contrast, TOKEN_KEYS, TERMINAL_KEYS } from '../src/theme-map.mjs'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
-const profiles = JSON.parse(readFileSync(join(root, 'build/profiles.json'), 'utf8'))
+// CI has no vendored TOMLs; `build/` is the fast path, `fixtures/` is the
+// committed copy of the same generated catalog so the math is testable alone.
+const catalogPath = [join(root, 'build/profiles.json'), join(root, 'fixtures/profiles.json')].find(p => existsSync(p))
+if (!catalogPath) {
+  console.error('no profiles.json found — run tools/build.py first')
+  process.exit(1)
+}
+const profiles = JSON.parse(readFileSync(catalogPath, 'utf8'))
 
 const failures = []
 const lowContrast = []

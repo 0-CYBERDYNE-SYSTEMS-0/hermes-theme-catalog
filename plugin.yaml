@@ -1,6 +1,6 @@
 {
   "name": "theme-catalog",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Every terminal color profile as a Hermes desktop theme: 606 iTerm2-Color-Schemes profiles mapped to full desktop palettes, searchable from a page and selectable in Appearance, the ⌘K picker and /skin.",
   "author": "0-CYBERDYNE-SYSTEMS-0",
   "manifest_version": 1,

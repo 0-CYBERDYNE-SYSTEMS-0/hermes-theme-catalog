@@ -1,5 +1,7 @@
 # Theme Catalog
 
+[![CI](https://github.com/0-CYBERDYNE-SYSTEMS-0/hermes-theme-catalog/actions/workflows/ci.yml/badge.svg)](https://github.com/0-CYBERDYNE-SYSTEMS-0/hermes-theme-catalog/actions/workflows/ci.yml)
+
 Every terminal color profile you already have, as a Hermes desktop theme.
 
 606 profiles from [iTerm2-Color-Schemes](https://github.com/mbadolato/iTerm2-Color-Schemes)
@@ -17,9 +19,13 @@ so a catalog theme built from Gruvbox reads like Gruvbox.
 - **They are real registered themes.** Every profile also appears in Settings →
   Appearance, the ⌘K theme picker, and `/skin catalog-gruvbox-dark`, because
   they register through `THEMES_AREA` like any other desktop theme.
-- **Searchable, uncapped.** Filter by name and the counter says how many
-  matched. With no filter set, every one of the 606 rows is rendered and
-  scrollable — nothing is hidden behind a row cap.
+- **Searchable, uncapped.** Filter by name, by `dark` / `light`, or by a hex
+  color to find themes containing it. Filter chips for **Edited**, **★** and
+  **Mine**; sort by catalog order or by guaranteed readability. With no filter
+  set every row is rendered and scrollable — nothing is hidden behind a cap.
+- **Built for 606 rows.** `/` focuses the filter, `↑↓` (or `j k`) move, `↵`
+  applies, `e` opens the editor, `s` stars, `Esc` clears. Each row shows its
+  minimum contrast ratio, so an unreadable palette is visible before you wear it.
 - **Repaint the two primary colors.** The first two chips on every row are the
   page background and the body text. Click either one and the editor opens with
   the system color picker (macOS wheel / sliders / palettes / magnifier), a hex
@@ -30,7 +36,8 @@ so a catalog theme built from Gruvbox reads like Gruvbox.
   accents, contrast floors — recomputes from the new pair, so an edit yields a
   coherent theme rather than a patchwork. Edits persist, survive restart, mark
   the row `✎ edited`, and repaint the app live when the theme is the applied
-  one. Reset puts the profile's own colors back.
+  one. **Hold: original** A/Bs against the shipped colors, **Undo** steps back
+  per slot, **Reset slot** clears one color and **Reset both** clears the theme.
 - **Readable by construction.** Body text is guaranteed ≥4.5:1 against its own
   surface, muted text ≥4.5:1, destructive ≥3:1. 24 profiles ship a foreground
   the terminal itself cannot read (Batman 3.37:1, C64 2.26:1). Those stay
@@ -95,14 +102,50 @@ node tools/registration-test.mjs   # loads the plugin under stubs, exercises reg
 | `src/ui.js` | the catalog page and registration |
 | `tools/build.py` | parse profiles, assemble the single-file plugin |
 | `tools/verify.mjs` | 606-theme structural + contrast + verbatim-fidelity checks |
-| `tools/registration-test.mjs` | module-load and register() harness with stubbed SDK |
+| `tools/registration-test.mjs` | module-load, register(), render, edit and authoring harness |
+| `fixtures/profiles.json` | committed catalog, so the math is testable without the vendored TOMLs |
 
-## Editing one theme
+## Authoring a theme of your own
 
-The page's **Copy** button puts the full theme object (tokens + terminal) on the
-clipboard. Paste it into whatever authoring surface you prefer. There is no
-direct write into Theme Forge's storage: plugin storage is per-plugin, so a
-handoff would mean writing another plugin's private record.
+An edit is an override of one catalog theme: it is stored in this install's
+plugin storage (`primary-color-edits`), survives restart and reinstall, and
+never rewrites the shipped catalog.
+
+To keep a look as an entry of its own, **Save as** in the editor mints
+`catalog-<name>-custom` with the current pair and the profile's own 16 ANSI
+colors. Saved entries are registered themes: they appear in Appearance, ⌘K and
+`/skin`, can be starred, edited, and **Deleted** from the editor. They live in
+`custom-themes` in plugin storage.
+
+**Export** writes `{ version, exportedAt, themes: [{ label, base, bg, fg, ansi }] }`
+as JSON (one theme from the editor, the current list from the toolbar);
+**Import** reads the same shape back. That is the only way an authored theme
+leaves this machine — plugin storage is per-plugin, so there is no direct write
+into another plugin's records.
+
+## Tests and CI
+
+`.github/workflows/ci.yml` runs on every push and pull request: a syntax check of
+the shipped bundle, the color-math suite, and the registration/authoring harness
+on Node 20 and 22, plus `py_compile` for the TUI half.
+
+The harness is not a smoke test. It loads `desktop/plugin.js` under stubbed
+`@hermes/plugin-sdk` and React modules, drives the real code paths and asserts
+what reached the registry:
+
+- 606 theme registrations, unique ids, 26 tokens and 19 terminal keys each
+- the app's ⌘K keyword construction (a theme without a `description` crashes it)
+- every row's BG · FG · 16-ANSI strip contract, all 606 rows, no row cap
+- an edit round trip: chip → panel → hex commit → exactly one republish of the
+  same object, persistence, reset, and boot restore
+- save-as, import (including rejecting invalid hex), export payload, delete
+- undo, compare, per-slot reset, star persistence, mode filter, contrast sort
+- `desktop/plugin.js` drift: every theme re-derived from `fixtures/profiles.json`
+  and compared token-by-token with the shipped bundle
+
+```bash
+npm test          # node tools/verify.mjs && node tools/registration-test.mjs
+```
 
 ## Cost worth knowing
 
