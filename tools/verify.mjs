@@ -56,6 +56,35 @@ for (const profile of profiles) {
 
 const modes = profiles.reduce((acc, p) => acc + (themeFromProfile(p).mode === 'dark' ? 1 : 0), 0)
 
+// ── primary-color repaint ───────────────────────────────────────────────────
+// The editor replaces one primary color and the whole token set is rebuilt from
+// the profile again. Check the contract every edit has to meet.
+const repaintFailures = []
+const sample = [profiles[0], profiles[1], profiles[Math.floor(profiles.length / 2)], profiles[profiles.length - 1]]
+
+for (const profile of sample) {
+  const bgEdit = themeFromProfile(profile, { bg: '#101014' })
+  if (bgEdit.colors.background !== '#101014') repaintFailures.push(`${profile.label}: new background not applied`)
+  for (const problem of validateTheme(bgEdit)) repaintFailures.push(`${profile.label} bg edit: ${problem}`)
+  // Everything else on the theme must still come from the profile.
+  for (let i = 0; i < 16; i += 1) {
+    if (bgEdit.terminal[ANSI_KEYS[i]] !== profile.ansi[i]) repaintFailures.push(`${profile.label}: ANSI changed during a bg edit`)
+  }
+
+  const fgEdit = themeFromProfile(profile, { fg: '#ff8800' })
+  if (fgEdit.terminal.foreground !== '#ff8800') repaintFailures.push(`${profile.label}: terminal foreground not the picked color`)
+  if (contrast(fgEdit.colors.foreground, fgEdit.colors.background) < 4.5) repaintFailures.push(`${profile.label}: picked text color breaks the 4.5:1 floor`)
+
+  const lightEdit = themeFromProfile(profile, { bg: '#fdf6e3', fg: '#002b36' })
+  if (lightEdit.mode !== 'light') repaintFailures.push(`${profile.label}: switching to a light background did not flip the mode`)
+  for (const problem of validateTheme(lightEdit)) repaintFailures.push(`${profile.label} light edit: ${problem}`)
+
+  // Garbage must never reach a theme.
+  const junk = themeFromProfile(profile, { bg: 'nope', fg: '#12' })
+  if (junk.colors.background !== profile.bg) repaintFailures.push(`${profile.label}: invalid background was applied`)
+  if (junk.terminal.foreground !== profile.fg) repaintFailures.push(`${profile.label}: invalid foreground was applied`)
+}
+
 console.log(`profiles checked : ${profiles.length}`)
 console.log(`unique names     : ${names.size}`)
 console.log(`dark / light     : ${modes} / ${profiles.length - modes}`)
@@ -64,6 +93,8 @@ console.log(`min muted        : ${minMuted.ratio.toFixed(2)}:1 on the muted surf
 console.log(`failures         : ${failures.length}`)
 console.log(`profiles whose own fg is under 4.5:1 (kept verbatim in the terminal palette): ${lowContrast.length}`)
 for (const line of lowContrast.slice(0, 8)) console.log('  ·', line)
+console.log(`repaint checks   : ${repaintFailures.length === 0 ? 'pass' : `${repaintFailures.length} failures`} (${sample.length} sampled profiles x bg/fg/light/junk)`)
+for (const line of repaintFailures.slice(0, 15)) console.log('  ✗', line)
 for (const line of failures.slice(0, 25)) console.log('  ✗', line)
 
-process.exit(failures.length === 0 ? 0 : 1)
+process.exit(failures.length === 0 && repaintFailures.length === 0 ? 0 : 1)

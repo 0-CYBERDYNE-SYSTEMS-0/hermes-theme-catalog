@@ -11,6 +11,8 @@ import { mkdirSync, writeFileSync, copyFileSync, rmSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
+import { contrast } from '../src/theme-map.mjs'
+
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const sandbox = join(root, 'build/stub-run')
 
@@ -72,17 +74,28 @@ if (plugin?.id !== 'theme-catalog') problems.push(`plugin id is ${plugin?.id}`)
 if (typeof plugin?.register !== 'function') problems.push('no register(ctx)')
 
 const registrations = []
+const storageWrites = []
 let disposed = 0
-const ctx = {
-  register: spec => {
-    registrations.push(spec)
-    return () => { disposed += 1 }
-  },
-  onDispose: fn => { ctx._onDispose = fn },
-  storage: { get: (k, d) => d, set: () => {} }
+const makeCtx = (initial = {}) => {
+  const ctx = {
+    register: spec => {
+      registrations.push(spec)
+      return () => { disposed += 1 }
+    },
+    onDispose: fn => { ctx._onDispose = fn },
+    storage: {
+      get: (k, d) => (k in initial ? initial[k] : d),
+      set: (k, v) => { storageWrites.push({ key: k, value: v }) }
+    }
+  }
+  return ctx
 }
+const ctx = makeCtx()
 
 plugin.register(ctx)
+/** Registration count after the first load pass, so the report can separate that
+ *  from the re-registrations the edit/boot-restore paths perform. */
+const firstPass = registrations.length
 
 const themes = registrations.filter(r => r.area === 'themes')
 const routes = registrations.filter(r => r.area === 'routes')
@@ -161,8 +174,10 @@ if (strips.length === 0) problems.push('no swatch strips found in the rendered p
 else if (strips.length !== 606) problems.push(`rendered ${strips.length} rows with no filter, expected all 606`)
 for (const [index, kids] of strips.entries()) {
   const titles = kids.map(k => (k?.props?.title ? String(k.props.title) : 'divider'))
-  if (!titles[0].startsWith('background ')) problems.push(`strip ${index}: first chip is ${titles[0]}`)
-  if (!titles[1].startsWith('body text ')) problems.push(`strip ${index}: second chip is ${titles[1]}`)
+  if (!/^background /i.test(titles[0])) problems.push(`strip ${index}: first chip is ${titles[0]}`)
+  if (!/^body text /i.test(titles[1])) problems.push(`strip ${index}: second chip is ${titles[1]}`)
+  if (kids[0]?.type !== 'button' || kids[1]?.type !== 'button') problems.push(`strip ${index}: BG/FG chips are not editable buttons`)
+  if (!kids[0]?.props?.['data-hex'] || !kids[1]?.props?.['data-hex']) problems.push(`strip ${index}: primary chips have no data-hex for the lens`)
   if (titles[2] !== 'divider') problems.push(`strip ${index}: missing divider after BG/FG`)
   const ansi = titles.slice(3)
   if (ansi.length !== 16) problems.push(`strip ${index}: ${ansi.length} ANSI chips`)
@@ -190,7 +205,104 @@ for (const text of texts) {
   if (/narrow the filter|\d+ more/i.test(text)) problems.push(`truncation notice still rendered: "${text}"`)
 }
 
-console.log(`registrations    : ${registrations.length} (606 themes, 1 route, 1 nav, 1 palette)`)
+// ── primary-color editing, end to end ───────────────────────────────────────
+// Click the BG chip the way a user does, render the panel, drive the same
+// onChange the hex field calls, and assert what actually reached the registry.
+const rerender = () => {
+  const element = routes[0].render()
+  return typeof element?.type === 'function' ? element.type(element.props) : element
+}
+
+const findAll = (node, pred, out = [], depth = 0) => {
+  if (!node || typeof node !== 'object' || depth > 16) return out
+  if (Array.isArray(node)) {
+    node.forEach(child => findAll(child, pred, out, depth))
+    return out
+  }
+  if (typeof node.type === 'function') {
+    findAll(node.type({ ...node.props }), pred, out, depth + 1)
+    return out
+  }
+  if (pred(node)) out.push(node)
+  findAll(node.props?.children, pred, out, depth + 1)
+  return out
+}
+
+const isStrip = n => Array.isArray(n.props?.children) && n.props.children.length === 19 && n.props.children[0]?.props?.title
+/** findAll matches the strip's container node; the chips are its children. */
+const stripKids = tree => findAll(tree, isStrip).map(n => n.props.children)
+const isPanel = n => n.props?.['data-lens-panel'] === 'true'
+
+// The dispose check above ran the plugin's disposers, which nulls its republish
+// hook (correctly). Re-register so the edit path has a live registry to publish
+// into, exactly as it does in the running app.
+plugin.register(makeCtx())
+
+const target0 = themes[0].data
+const originalBg = target0.colors.background
+const originalFg = target0.terminal.foreground
+
+const clickChip = chip => chip.props.onClick({ currentTarget: { getBoundingClientRect: () => ({ left: 60, top: 120, bottom: 134 }) } })
+
+let tree = rerender()
+clickChip(stripKids(tree)[0][0])
+tree = rerender()
+const panels = findAll(tree, isPanel)
+if (panels.length !== 1) problems.push(`editor panel rendered ${panels.length} times, expected 1`)
+const panel = panels[0] || { props: { children: [] } }
+if (!findAll(panel, n => n.props?.type === 'color').length) problems.push('editor has no system color input')
+if (!findAll(panel, n => n.props?.['aria-label'] === 'Hex').length) problems.push('editor has no hex input')
+if (!findAll(panel, n => ['R', 'G', 'B'].includes(n.props?.['aria-label'])).length) problems.push('editor has no RGB fields')
+if (!findAll(panel, n => n.props?.['data-hex']).length) problems.push('editor has no preset swatches for the lens')
+
+const countBefore = registrations.length
+findAll(panel, n => n.props?.['aria-label'] === 'Hex')[0].props.onChange({ target: { value: '#101014' } })
+const republished = registrations.slice(countBefore).filter(r => r.id === `theme:${target0.name}`)
+if (republished.length !== 1) problems.push(`editing republished ${republished.length} registrations for ${target0.name}, expected 1`)
+else {
+  if (republished[0].data.colors.background !== '#101014') problems.push(`edit did not land: background ${republished[0].data.colors.background}`)
+  if (republished[0].data !== target0) problems.push('edit replaced the theme object instead of mutating the registered one')
+}
+
+tree = rerender()
+if (stripKids(tree)[0]?.[0]?.props?.['data-hex'] !== '#101014') problems.push('row chip did not follow the edit')
+
+// Foreground: the UI token has a readability floor, the terminal keeps what you picked.
+clickChip(stripKids(tree)[0][1])
+tree = rerender()
+const bodyTab = findAll(findAll(tree, isPanel)[0], n => n.type === 'Button' && n.props?.children === 'Body text')[0]
+if (!bodyTab) problems.push('editor has no body-text tab')
+else bodyTab.props.onClick()
+tree = rerender()
+findAll(findAll(tree, isPanel)[0], n => n.props?.['aria-label'] === 'Hex')[0].props.onChange({ target: { value: '#123456' } })
+if (target0.terminal.foreground !== '#123456') problems.push(`terminal foreground is ${target0.terminal.foreground}, expected the picked #123456`)
+if (contrast(target0.colors.foreground, target0.colors.background) < 4.5) problems.push('edited body text breaks the 4.5:1 floor')
+
+await new Promise(resolve => setTimeout(resolve, 400))
+const persisted = storageWrites.filter(w => w.key === 'primary-color-edits').pop()
+if (!persisted) problems.push('color edits were never persisted to ctx.storage')
+else if (!persisted.value?.[target0.name]?.bg || !persisted.value?.[target0.name]?.fg) {
+  problems.push(`persisted record incomplete: ${JSON.stringify(persisted.value[target0.name])}`)
+}
+
+// Reset puts the profile's own colors back.
+tree = rerender()
+const resetButton = findAll(findAll(tree, isPanel)[0], n => n.type === 'Button' && n.props?.children === 'Reset')[0]
+if (!resetButton) problems.push('editor has no reset button')
+else resetButton.props.onClick()
+if (target0.colors.background !== originalBg) problems.push(`reset left background at ${target0.colors.background}`)
+if (target0.terminal.foreground !== originalFg) problems.push(`reset left foreground at ${target0.terminal.foreground}`)
+
+// Boot restore: a saved edit must be folded in before the theme registers.
+const bootCtx = makeCtx({ 'primary-color-edits': { [target0.name]: { bg: '#101014', fg: '#123456' } } })
+plugin.register(bootCtx)
+if (target0.colors.background !== '#101014') problems.push(`boot restore did not apply the saved background (${target0.colors.background})`)
+if (target0.terminal.foreground !== '#123456') problems.push('boot restore did not apply the saved foreground')
+const bootTheme = bootCtx._onDispose && registrations.slice(-3).find(r => r.id === `theme:${target0.name}`)
+if (bootTheme && bootTheme.data.colors.background !== '#101014') problems.push('boot restore registered unedited colors')
+
+console.log(`registrations    : ${themes.length} themes + 1 route + 1 nav + 1 palette (first pass)`)
+console.log(`re-registered    : ${registrations.length - firstPass} theme publishes (re-register, edit, reset, boot restore)`)
 console.log(`disposers run    : ${disposed}`)
 console.log(`page render      : ${page ? "ok" : "failed"}`)
 console.log(`strips verified  : ${strips.length}`)

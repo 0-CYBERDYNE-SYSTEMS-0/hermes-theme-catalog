@@ -20,6 +20,17 @@ so a catalog theme built from Gruvbox reads like Gruvbox.
 - **Searchable, uncapped.** Filter by name and the counter says how many
   matched. With no filter set, every one of the 606 rows is rendered and
   scrollable — nothing is hidden behind a row cap.
+- **Repaint the two primary colors.** The first two chips on every row are the
+  page background and the body text. Click either one and the editor opens with
+  the system color picker (macOS wheel / sliders / palettes / magnifier), a hex
+  field, R·G·B fields, the theme's own 16 colors as presets, and a lens.
+  **Hover pick** arms a lens: hover any swatch on the page, click to take that
+  color, Esc to cancel. **Screen lens** samples anywhere on screen through
+  Chromium's EyeDropper. Every derived token — cards, borders, muted text,
+  accents, contrast floors — recomputes from the new pair, so an edit yields a
+  coherent theme rather than a patchwork. Edits persist, survive restart, mark
+  the row `✎ edited`, and repaint the app live when the theme is the applied
+  one. Reset puts the profile's own colors back.
 - **Readable by construction.** Body text is guaranteed ≥4.5:1 against its own
   surface, muted text ≥4.5:1, destructive ≥3:1. 24 profiles ship a foreground
   the terminal itself cannot read (Batman 3.37:1, C64 2.26:1). Those stay
