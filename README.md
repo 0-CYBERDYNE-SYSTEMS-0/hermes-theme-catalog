@@ -30,10 +30,23 @@ so a catalog theme built from Gruvbox reads like Gruvbox.
 ## Install
 
 ```bash
-git clone https://github.com/0-CYBERDYNE-SYSTEMS-0/hermes-theme-catalog.git
 hermes plugins install 0-CYBERDYNE-SYSTEMS-0/hermes-theme-catalog
 hermes plugins enable theme-catalog
 ```
+
+That's it. On first plugin load (and whenever the catalog or widget changes),
+`register()` materializes the 606 TUI skins into `~/.hermes/skins/catalog-*.yaml`
+and copies the picker widget to `~/.hermes/tui-widgets/themes.mjs` (stamp-guarded;
+repeat loads cost one hash plus a presence check). If the repo is private and your
+gh token is dead, the SSH route works too:
+
+```bash
+git clone git@github.com:0-CYBERDYNE-SYSTEMS-0/hermes-theme-catalog.git ~/.hermes/plugins/theme-catalog
+hermes plugins adopt theme-catalog && hermes plugins enable theme-catalog
+```
+
+Requires Hermes >= 0.23.0 (the plugin refuses to register on older; run
+`hermes update --yes` first).
 
 The desktop half is `desktop/plugin.js`; if it does not appear in the app, copy
 it to `~/.hermes/desktop-plugins/theme-catalog/plugin.js` and ⌘K → **Reload
@@ -41,23 +54,16 @@ desktop plugins**.
 
 ## Use the themes in the TUI
 
-The desktop themes above only paint the desktop app. For the terminal UI, generate
-real TUI skins from the same profiles (same color math, same 4.5:1 floor):
+The desktop themes above only paint the desktop app. The terminal UI gets the same
+profiles two ways — both automatic on plugin load:
 
-```bash
-python3 tools/build-skins.py                       # writes 606 skins to ~/.hermes/skins
-hermes skin use catalog-gruvbox-dark               # live repaint
-```
+- **606 real TUI skins** at `~/.hermes/skins/catalog-*.yaml` (same color math, same
+  4.5:1 floor) — `/skin catalog-gruvbox-dark` or `hermes skin use catalog-gruvbox-dark`.
+- **The `/themes` picker widget** (`tui/themes.mjs`, copied to
+  `~/.hermes/tui-widgets/`): 606 rows with ANSI swatches, type-to-filter, arrows to
+  move, enter applies live via `hermes skin use <slug>`.
 
-The TUI also gets a picker widget (`tui/themes.mjs` — 606 rows with ANSI swatches,
-type-to-filter, arrows to move, enter applies live):
-
-```bash
-cp tui/themes.mjs ~/.hermes/tui-widgets/themes.mjs
-# in the TUI: /widgets-reload, then /themes
-```
-
-The picker applies via `hermes skin use <slug>`, so it drives the same skin files.
+Rebuild by hand if you ever want to: `python3 tools/build-skins.py`.
 
 ## Rebuild the catalog
 
